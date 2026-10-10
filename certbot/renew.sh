@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 set -e
 
 CERT_NAME="$DOMAIN_NAME"
@@ -35,7 +35,7 @@ fi
 # 2. Первый выпуск сертификата, если его нет
 if [ ! -d "$LIVE_DIR" ] || [ ! -f "$LIVE_DIR/fullchain.pem" ]; then
     echo "No certificate found — requesting new one..."
-    certbot certonly --quiet --non-interactive --agree-tos --expand \
+    certbot certonly --non-interactive --agree-tos --expand \
         --dns-cloudflare \
         --dns-cloudflare-credentials /app/cloudflare.ini \
         --dns-cloudflare-propagation-seconds 60 \
@@ -67,7 +67,7 @@ fi
 echo "Starting renew loop (every ${RENEW_INTERVAL})..."
 while true; do
     echo "[$(date)] Running certbot renew..."
-    certbot renew --quiet --deploy-hook "/app/update-haproxy.sh"
+    certbot renew --deploy-hook "/app/update-haproxy.sh"
     echo "[$(date)] Sleeping ${RENEW_INTERVAL}..."
     sleep "${RENEW_INTERVAL}"
 done
