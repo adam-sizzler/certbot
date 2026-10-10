@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 set -e
 
 CERT_NAME="$DOMAIN_NAME"
@@ -67,7 +67,8 @@ fi
 echo "Starting renew loop (every ${RENEW_INTERVAL})..."
 while true; do
     echo "[$(date)] Running certbot renew..."
-    certbot renew --deploy-hook "/app/update-haproxy.sh"
+    certbot renew --deploy-hook "/app/update-haproxy.sh" \
+        || echo "WARN: certbot renew failed, will retry next cycle"
     echo "[$(date)] Sleeping ${RENEW_INTERVAL}..."
     sleep "${RENEW_INTERVAL}"
 done
