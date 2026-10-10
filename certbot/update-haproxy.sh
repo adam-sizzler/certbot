@@ -22,14 +22,22 @@ cat "$LIVE_DIR/fullchain.pem" "$LIVE_DIR/privkey.pem" > "$HAPROXY_CERT_PATH"
 chmod 644 "$HAPROXY_CERT_PATH"
 
 update_runtime_cert() {
+    # Шаг 1: загрузить новый PEM в HAProxy (создаёт транзакцию).
+    # Payload терминируется пустой строкой. Отдельная сессия socat.
     {
-        echo "set ssl cert $HAPROXY_CERT_PATH <<"
+        printf 'set ssl cert %s <<\n' "$HAPROXY_CERT_PATH"
         cat "$HAPROXY_CERT_PATH"
-        echo "EOF"
-        echo "commit ssl cert $HAPROXY_CERT_PATH"
-        echo "quit"
-    } | socat -T "$SOCKET_TIMEOUT" "UNIX-CONNECT:$SOCKET_PATH" -
+        printf '\n\n'
+    } | socat -T "$SOCKET_TIMEOUT" "UNIX-CONNECT:$SOCKET_PATH" - || return 1
+
+    # Шаг 2: закоммитить транзакцию (активирует новый сертификат).
+    # Обязательно отдельная сессия — иначе HAProxy не обработает commit.
+    printf 'commit ssl cert %s\n' "$HAPROXY_CERT_PATH" | \
+        socat -T "$SOCKET_TIMEOUT" "UNIX-CONNECT:$SOCKET_PATH" - || return 1
+
+    return 0
 }
+
 attempt=1
 while [ "$attempt" -le "$MAX_RETRIES" ]; do
     if [ -S "$SOCKET_PATH" ]; then
@@ -41,7 +49,7 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
             echo "Certificate updated in HAProxy memory."
             exit 0
         fi
-        echo "WARN: Runtime API update failed (socat rc=$RC); retrying in ${RETRY_DELAY}s..."
+        echo "WARN: Runtime API update failed (rc=$RC); retrying in ${RETRY_DELAY}s..."
     else
         echo "WARN: HAProxy socket not ready ($SOCKET_PATH); retrying in ${RETRY_DELAY}s..."
     fi
