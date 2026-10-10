@@ -1,5 +1,4 @@
-#!/bin/sh
-set -e
+#!/usr/bin/env bash
 
 LIVE_DIR="/etc/letsencrypt/live/$DOMAIN_NAME"
 HAPROXY_CERT_PATH="$LIVE_DIR/haproxy.pem"
@@ -9,39 +8,40 @@ RETRY_DELAY="${HAPROXY_SOCKET_RETRY_DELAY:-30}"
 SOCKET_TIMEOUT="${HAPROXY_SOCKET_TIMEOUT:-3}"
 
 if [ -z "${DOMAIN_NAME:-}" ]; then
-    echo "ERROR: DOMAIN_NAME is empty" >&2
-    exit 1
+    echo "ERROR: DOMAIN_NAME is empty — cannot update HAProxy cert" >&2
+    exit 0
 fi
 
 if [ ! -s "$LIVE_DIR/fullchain.pem" ] || [ ! -s "$LIVE_DIR/privkey.pem" ]; then
     echo "ERROR: certificate files not found in $LIVE_DIR" >&2
-    exit 1
+    exit 0
 fi
 
-# Обновляем файл на диске
+# Пересобираем совмещённый PEM на диске (fullchain + privkey)
 cat "$LIVE_DIR/fullchain.pem" "$LIVE_DIR/privkey.pem" > "$HAPROXY_CERT_PATH"
 chmod 644 "$HAPROXY_CERT_PATH"
 
 update_runtime_cert() {
-    socat -T "$SOCKET_TIMEOUT" "UNIX-CONNECT:$SOCKET_PATH" - <<EOF
-set ssl cert $HAPROXY_CERT_PATH <<
-$(cat "$HAPROXY_CERT_PATH")
-
-commit ssl cert $HAPROXY_CERT_PATH
-EOF
+    {
+        echo "set ssl cert $HAPROXY_CERT_PATH <<"
+        cat "$HAPROXY_CERT_PATH"
+        echo "EOF"
+        echo "commit ssl cert $HAPROXY_CERT_PATH"
+        echo "quit"
+    } | socat -T "$SOCKET_TIMEOUT" "UNIX-CONNECT:$SOCKET_PATH" -
 }
-
-# Не выходим с ошибкой, если HAProxy ещё не поднялся.
-# Это важно при старте stack, когда certbot может стартовать раньше haproxy.
 attempt=1
 while [ "$attempt" -le "$MAX_RETRIES" ]; do
     if [ -S "$SOCKET_PATH" ]; then
         echo "Updating certificate in HAProxy via Unix socket (attempt $attempt/$MAX_RETRIES)..."
-        if update_runtime_cert; then
+        OUTPUT=$(update_runtime_cert 2>&1)
+        RC=$?
+        echo "$OUTPUT"
+        if [ "$RC" -eq 0 ]; then
             echo "Certificate updated in HAProxy memory."
             exit 0
         fi
-        echo "WARN: Runtime API update failed; retrying in ${RETRY_DELAY}s..."
+        echo "WARN: Runtime API update failed (socat rc=$RC); retrying in ${RETRY_DELAY}s..."
     else
         echo "WARN: HAProxy socket not ready ($SOCKET_PATH); retrying in ${RETRY_DELAY}s..."
     fi
