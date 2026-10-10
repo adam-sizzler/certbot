@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 
 LIVE_DIR="/etc/letsencrypt/live/$DOMAIN_NAME"
 HAPROXY_CERT_PATH="$LIVE_DIR/haproxy.pem"
