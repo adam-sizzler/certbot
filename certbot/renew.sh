@@ -56,19 +56,30 @@ else
     fi
 fi
 
-# 3. Обновляем HAProxy (первичная загрузка сертификата)
+# 3. Синхронизируем HAProxy (первичная загрузка сертификата).
+#    Не фатально: HAProxy может ещё стартовать, синхронизация повторяется в каждом цикле.
 if [ ! -s "$LIVE_DIR/fullchain.pem" ] || [ ! -s "$LIVE_DIR/privkey.pem" ]; then
     echo "ERROR: certificate files are missing in $LIVE_DIR" >&2
     exit 1
 fi
-/app/update-haproxy.sh
+/app/update-haproxy.sh || echo "WARN: initial HAProxy sync failed, will retry next cycle"
 
-# 4. Бесконечный цикл обновления
+# 4. Бесконечный цикл обновления.
+#    PID 1 не получает дефолтных обработчиков сигналов, а `sleep` в foreground их
+#    блокирует — без trap `docker stop` ждёт 10 с и убивает контейнер через SIGKILL.
+trap 'echo "Signal received, exiting"; exit 0' TERM INT
+
 echo "Starting renew loop (every ${RENEW_INTERVAL})..."
 while true; do
     echo "[$(date)] Running certbot renew..."
-    certbot renew --deploy-hook "/app/update-haproxy.sh" \
-        || echo "WARN: certbot renew failed, will retry next cycle"
+    certbot renew || echo "WARN: certbot renew failed, will retry next cycle"
+
+    # Синхронизация — ВСЕГДА, а не из --deploy-hook: хук срабатывает только в момент
+    # фактического продления, и если HAProxy тогда не принял сертификат, на следующем
+    # цикле certbot скажет "not yet due" и HAProxy остался бы со старым сертификатом.
+    /app/update-haproxy.sh || echo "WARN: HAProxy sync failed, will retry next cycle"
+
     echo "[$(date)] Sleeping ${RENEW_INTERVAL}..."
-    sleep "${RENEW_INTERVAL}"
+    sleep "${RENEW_INTERVAL}" &
+    wait $!
 done
